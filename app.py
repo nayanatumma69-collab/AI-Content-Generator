@@ -17,12 +17,6 @@ def get_groq_client():
 
 client = get_groq_client()
 
-@st.cache_resource
-def get_groq_client():
-    return Groq(api_key=GROQ_API_KEY)
-
-client = get_groq_client()
-
 def compute_metrics(text):
     if not text or text.startswith("Groq API Error:"):
         return 0, 0, 0.0
