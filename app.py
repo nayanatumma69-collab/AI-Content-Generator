@@ -1,7 +1,7 @@
-%%writefile app.py
 import streamlit as st
 import re
 from groq import Groq
+
 
 st.set_page_config(page_title="AI Content Generator", page_icon="✍️", layout="wide")
 
