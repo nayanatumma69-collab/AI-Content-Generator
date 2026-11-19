@@ -126,3 +126,7 @@ This project demonstrates practical experience with:
 ## 👩‍💻 Author
 
 Developed as part of an Artificial Intelligence learning and project portfolio to demonstrate practical skills in Python, Generative AI, prompt engineering, and application development.
+
+- [LinkedIn](https://www.linkedin.com/in/nayana-tumma-23187687)
+- [GitHub](https://github.com/nayanatumma69-collab)
+
