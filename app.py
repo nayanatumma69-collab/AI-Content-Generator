@@ -1,155 +1,275 @@
-import streamlit as st
 import re
+
+import streamlit as st
 from groq import Groq
 
-
-st.set_page_config(page_title="AI Content Generator", page_icon="✍️", layout="wide")
-
-st.title("✍️ AI Content Generator")
-st.write("Generate tailored marketing copy, blog posts, and social media captions with instant refinement.")
+st.set_page_config(page_title="AI Content Generator", page_icon="✨", layout="wide")
 
 # Hardcoded backend configuration
 MODEL_NAME = "openai/gpt-oss-20b"
+
+FORMATS = {
+    "Blog Post": ("📝", "Write a well-structured blog post with a title, engaging intro, clear section headings, and a conclusion with a CTA."),
+    "Social Media Caption": ("📱", "Write an attention-grabbing social media caption with a strong hook, readable spacing, relevant emojis, and 3-5 hashtags."),
+    "Email Newsletter": ("📧", "Write a compelling email newsletter featuring 2-3 subject line options, a greeting placeholder, clean narrative body, and a CTA."),
+}
+TONES = ["Professional", "Casual & Friendly", "Persuasive", "Enthusiastic"]
+LENGTHS = {
+    "Short": "Keep it brief and tight.",
+    "Medium": "Use a moderate length that suits the format.",
+    "Long": "Be detailed and thorough.",
+}
+EXAMPLES = {
+    "🤖 AI for small business": "How AI automation agents transform small business workflows",
+    "🌱 Eco-friendly launch": "Launching our new range of eco-friendly water bottles",
+    "🎓 Learning to code": "Five habits that help beginners learn to code faster",
+}
+QUICK_REFINEMENTS = {
+    "✂️ Shorter": "Make it noticeably shorter while keeping the key message.",
+    "👔 More formal": "Make the tone more formal and polished.",
+    "😄 Add emojis": "Add a few relevant emojis without overdoing it.",
+    "📣 Stronger CTA": "Make the call to action stronger and clearer.",
+}
+
+st.markdown(
+    """
+    <style>
+    .hero {
+        background: linear-gradient(120deg, #7C3AED 0%, #DB2777 55%, #EA580C 100%);
+        border-radius: 22px; padding: 28px 32px; margin-bottom: 20px;
+    }
+    .hero h1 { color: #FFFFFF; margin: 0; padding: 0; font-size: 2.1rem; }
+    .hero p { color: #FFFFFF; margin: 8px 0 0; font-size: 1.05rem; }
+    div[data-testid="stMetric"] {
+        background: linear-gradient(135deg, #F5EEFF, #FFEFF6);
+        border-radius: 16px; padding: 12px 16px;
+    }
+    button[kind="primary"] {
+        background: linear-gradient(90deg, #7C3AED, #DB2777); border: none;
+    }
+    </style>
+    <div class="hero">
+        <h1>✨ AI Content Generator</h1>
+        <p>Turn one idea into blog posts, captions and newsletters, then polish them in a click.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_resource
 def get_groq_client():
     return Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-client = get_groq_client()
 
 def compute_metrics(text):
-    if not text or text.startswith("Groq API Error:"):
-        return 0, 0, 0.0
-    words = len(re.findall(r'\b\w+\b', text))
-    chars = len(text)
-    read_time = round(words / 225, 2)
-    return words, chars, read_time
+    words = len(re.findall(r"\b\w+\b", text))
+    sentences = len([s for s in re.split(r"[.!?]+(?:\s+|$)|\n+", text) if re.search(r"\w", s)])
+    read_time = max(1, round(words / 225))
+    return words, len(text), sentences, read_time
 
-def generate_content(topic, content_type, tone, audience, instructions):
-    format_guides = {
-        "Blog Post": "Write a well-structured blog post with a title, engaging intro, clear section headings, and a conclusion with a CTA.",
-        "Social Media Caption": "Write an attention-grabbing social media caption with a strong hook, readable spacing, relevant emojis, and 3-5 hashtags.",
-        "Email Newsletter": "Write a compelling email newsletter featuring 2-3 subject line options, a greeting placeholder, clean narrative body, and a CTA."
-    }
-    prompt = f"""You are an expert AI content writer.
+
+def build_generation_prompt(topic, content_type, tone, audience, length, instructions):
+    return f"""You are an expert AI content writer.
 Task: Write {content_type}.
 Topic: {topic}
 Tone: {tone}
 Target Audience: {audience}
+Length: {LENGTHS[length]}
 
 Format Rules:
-{format_guides.get(content_type, '')}
+{FORMATS[content_type][1]}
 
-Additional Instructions:
-{instructions if instructions else 'None.'}
+Additional Instructions (these override the length above):
+{instructions or 'None.'}
 
 Output only the generated content in clean Markdown without preambles.
 """
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a professional copywriter."},
-                {"role": "user", "content": prompt}
-            ],
-            model=MODEL_NAME,
-            temperature=0.7,
-            max_tokens=2048
-        )
-        return completion.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Groq API Error: {str(e)}"
 
-def refine_content(current_text, refinement_instruction):
-    prompt = f"""You are an expert copy editor.
+
+def build_refinement_prompt(current_text, instruction):
+    return f"""You are an expert copy editor.
 Current Draft:
 \"\"\"
 {current_text}
 \"\"\"
 
 Refinement Instruction:
-{refinement_instruction}
+{instruction}
 
 Output only the rewritten content in clean Markdown without preambles.
 """
-    try:
-        completion = client.chat.completions.create(
+
+
+def run_model(system_message, prompt, temperature, label, placeholder):
+    """Stream a reply into placeholder. A new version is saved only on success."""
+    finish = {}
+
+    def chunks():
+        stream = get_groq_client().chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a professional copy editor."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt},
             ],
             model=MODEL_NAME,
-            temperature=0.6,
-            max_tokens=2048
+            temperature=temperature,
+            max_tokens=2048,
+            stream=True,
         )
-        return completion.choices[0].message.content.strip()
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish["reason"] = choice.finish_reason
+            if choice.delta.content:
+                yield choice.delta.content
+
+    try:
+        with placeholder.container(border=True), st.spinner(f"{label}..."):
+            text = st.write_stream(chunks())
+        text = text.strip() if isinstance(text, str) else ""
+        if not text:
+            raise ValueError("The model returned no text. Please try again.")
     except Exception as e:
-        return f"Groq API Error during refinement: {str(e)}"
+        placeholder.empty()
+        st.error(f"{label} failed. Your previous draft is unchanged.\n\n{e}")
+        return
 
-if "generated_text" not in st.session_state:
-    st.session_state.generated_text = ""
+    st.session_state.history.append({"label": label, "text": text})
+    st.session_state.truncated = finish.get("reason") == "length"
+    st.rerun()
 
-# Two-column layout
-col_left, col_right = st.columns([1, 1])
 
-with col_left:
-    st.subheader("1. Content Settings")
-    content_type = st.selectbox("Content Format", ["Blog Post", "Social Media Caption", "Email Newsletter"])
-    tone = st.selectbox("Tone of Voice", ["Professional", "Casual & Friendly", "Persuasive", "Enthusiastic"])
-    target_audience = st.text_input("Target Audience", value="Tech Professionals & Entrepreneurs")
-    topic = st.text_area("Topic / Key Message", value="How AI automation agents transform small business workflows", height=130)
-    custom_notes = st.text_input("Additional Constraints (Optional)", placeholder="e.g., under 150 words, include bullet points")
+def use_example(text):
+    st.session_state.topic = text
 
-    generate_btn = st.button("🚀 Generate Content", type="primary")
 
-with col_right:
-    st.subheader("2. Generated Output & Analytics")
-    if generate_btn:
-        if not topic.strip():
-            st.error("Please enter a topic.")
-        else:
-            with st.spinner("Generating content via Groq LPU..."):
-                st.session_state.generated_text = generate_content(
-                    topic, content_type, tone, target_audience, custom_notes
-                )
+def undo():
+    st.session_state.history.pop()
+    st.session_state.truncated = False
 
-    if st.session_state.generated_text:
-        words, chars, read_time = compute_metrics(st.session_state.generated_text)
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Words", words)
-        m2.metric("Characters", chars)
-        m3.metric("Est. Read Time", f"{read_time} min")
+def restore(index):
+    version = st.session_state.history[index]
+    st.session_state.history.append({"label": "Restored", "text": version["text"]})
+    st.session_state.truncated = False
 
-        st.markdown("---")
-        st.markdown(st.session_state.generated_text)
-        st.markdown("---")
 
-        with st.expander("📋 View Raw Markdown (Copyable)"):
-            st.code(st.session_state.generated_text, language="markdown")
+st.session_state.setdefault("history", [])
+st.session_state.setdefault("truncated", False)
 
-        st.subheader("3. Refine or Modify")
-        refine_instruction = st.text_input(
-            "Refinement instruction:",
-            placeholder="e.g., Make it shorter, add 3 bullet points, add emojis"
-        )
+# Sidebar: content settings
+with st.sidebar:
+    st.header("🎨 Create")
+    content_type = st.segmented_control(
+        "Content format",
+        list(FORMATS),
+        default="Blog Post",
+        format_func=lambda name: f"{FORMATS[name][0]} {name}",
+    ) or "Blog Post"
+    tone = st.pills("Tone of voice", TONES, default="Professional") or "Professional"
+    length = st.select_slider("Length", list(LENGTHS), value="Medium")
+    topic = st.text_area(
+        "Topic / key message",
+        key="topic",
+        placeholder="What do you want to write about?",
+        height=130,
+    )
+    audience = st.text_input("Target audience", value="Tech Professionals & Entrepreneurs")
+    notes = st.text_input("Extra constraints (optional)", placeholder="e.g., include bullet points")
+    generate_clicked = st.button("🚀 Generate content", type="primary", width="stretch")
 
-        r1, r2 = st.columns([1, 1])
-        with r1:
-            if st.button("🔄 Apply Refinement"):
-                if refine_instruction.strip():
-                    with st.spinner("Refining text..."):
-                        st.session_state.generated_text = refine_content(
-                            st.session_state.generated_text, refine_instruction
-                        )
-                        st.rerun()
+# Main area
+st.caption("Need inspiration? Try one of these:")
+for column, (name, example) in zip(st.columns(len(EXAMPLES)), EXAMPLES.items()):
+    column.button(name, on_click=use_example, args=(example,), width="stretch")
+
+history = st.session_state.history
+action = None  # (system message, prompt, temperature, label)
+
+
+def generation_action(label):
+    if not topic.strip():
+        st.error("Please enter a topic in the sidebar.")
+        return None
+    prompt = build_generation_prompt(topic, content_type, tone, audience, length, notes)
+    return ("You are a professional copywriter.", prompt, 0.7, label)
+
+
+def refinement_action(instruction, label):
+    prompt = build_refinement_prompt(history[-1]["text"], instruction)
+    return ("You are a professional copy editor.", prompt, 0.6, label)
+
+
+if generate_clicked:
+    action = generation_action("Generating")
+
+output = st.empty()
+
+if history:
+    draft = history[-1]["text"]
+
+    with output.container():
+        if st.session_state.truncated:
+            st.warning("This draft hit the length limit and may be cut off. Try a shorter length.")
+
+        words, chars, sentences, read_time = compute_metrics(draft)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("📖 Words", words)
+        m2.metric("🔤 Characters", chars)
+        m3.metric("💬 Sentences", sentences)
+        m4.metric("⏱️ Read time", f"~{read_time} min")
+
+        preview_tab, markdown_tab, history_tab = st.tabs(["👀 Preview", "📋 Markdown", "🕘 History"])
+        with preview_tab:
+            with st.container(border=True):
+                st.markdown(draft)
+        with markdown_tab:
+            st.code(draft, language="markdown", wrap_lines=True)
+        with history_tab:
+            for index in range(len(history) - 1, -1, -1):
+                current = " (current)" if index == len(history) - 1 else ""
+                with st.expander(f"Version {index + 1}: {history[index]['label']}{current}"):
+                    st.markdown(history[index]["text"])
+                    if not current:
+                        st.button("Restore this version", key=f"restore_{index}",
+                                  on_click=restore, args=(index,))
+
+        d1, d2, d3, d4 = st.columns(4)
+        d1.download_button("⬇️ Markdown", draft, "content.md", "text/markdown",
+                           on_click="ignore", width="stretch")
+        d2.download_button("⬇️ Text", draft, "content.txt", "text/plain",
+                           on_click="ignore", width="stretch")
+        d3.button("↩️ Undo", on_click=undo, disabled=len(history) < 2, width="stretch")
+        if d4.button("🔁 Regenerate", width="stretch"):
+            action = generation_action("Regenerating")
+
+        st.subheader("🪄 Polish it")
+        for column, (name, instruction) in zip(st.columns(4), QUICK_REFINEMENTS.items()):
+            if column.button(name, width="stretch"):
+                action = refinement_action(instruction, name)
+
+        with st.form("refine_form", clear_on_submit=False):
+            custom = st.text_input("Or describe your own change",
+                                   placeholder="e.g., add 3 bullet points")
+            if st.form_submit_button("Apply refinement"):
+                if custom.strip():
+                    action = refinement_action(custom.strip(), "Refining")
                 else:
-                    st.warning("Please provide a refinement command.")
-        with r2:
-            if st.button("🔁 Regenerate"):
-                with st.spinner("Regenerating..."):
-                    st.session_state.generated_text = generate_content(
-                        topic, content_type, tone, target_audience, custom_notes
-                    )
-                    st.rerun()
-    else:
-        st.info("Set your content parameters on the left and click **Generate Content**.")
+                    st.warning("Please describe the change you want.")
+elif not action:
+    with output.container():
+        st.subheader("What will you create today?")
+        blurbs = [
+            "Title, intro, clear sections and a closing call to action.",
+            "A strong hook, emojis and 3-5 hashtags.",
+            "Subject line options, greeting, body and call to action.",
+        ]
+        for column, (name, (icon, _)), blurb in zip(st.columns(3), FORMATS.items(), blurbs):
+            with column.container(border=True):
+                st.markdown(f"### {icon} {name}\n{blurb}")
+        st.info("Pick your settings in the sidebar, then click **Generate content**.")
+
+if action:
+    run_model(*action, placeholder=output)
