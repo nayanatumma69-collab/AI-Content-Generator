@@ -1,9 +1,15 @@
+import base64
+import random
 import re
+from pathlib import Path
 
 import streamlit as st
 from groq import Groq
 
 st.set_page_config(page_title="AI Content Generator", page_icon="✨", layout="wide")
+
+ASSETS = Path(__file__).parent / "assets"
+IMAGES = {"Blog Post": "blog.svg", "Social Media Caption": "social.svg", "Email Newsletter": "email.svg"}
 
 # Hardcoded backend configuration
 MODEL_NAME = "openai/gpt-oss-20b"
@@ -34,12 +40,12 @@ QUICK_REFINEMENTS = {
 st.markdown(
     """
     <style>
-    .hero {
-        background: linear-gradient(120deg, #7C3AED 0%, #DB2777 55%, #EA580C 100%);
-        border-radius: 22px; padding: 28px 32px; margin-bottom: 20px;
+    .stApp {
+        background: radial-gradient(circle at 90% 5%, #FFE4F1 0, transparent 35%),
+                    radial-gradient(circle at 30% 95%, #FFEDD5 0, transparent 35%), #FFFBFE;
     }
-    .hero h1 { color: #FFFFFF; margin: 0; padding: 0; font-size: 2.1rem; }
-    .hero p { color: #FFFFFF; margin: 8px 0 0; font-size: 1.05rem; }
+    .hero { width: 100%; border-radius: 22px; box-shadow: 0 12px 30px #7C3AED40; }
+    img { border-radius: 16px; }
     div[data-testid="stMetric"] {
         background: linear-gradient(135deg, #F5EEFF, #FFEFF6);
         border-radius: 16px; padding: 12px 16px;
@@ -48,11 +54,13 @@ st.markdown(
         background: linear-gradient(90deg, #7C3AED, #DB2777); border: none;
     }
     </style>
-    <div class="hero">
-        <h1>✨ AI Content Generator</h1>
-        <p>Turn one idea into blog posts, captions and newsletters, then polish them in a click.</p>
-    </div>
     """,
+    unsafe_allow_html=True,
+)
+hero = base64.b64encode((ASSETS / "hero.svg").read_bytes()).decode()
+st.markdown(
+    f'<img class="hero" src="data:image/svg+xml;base64,{hero}" '
+    'alt="AI Content Studio: one idea in, blogs, captions and emails out">',
     unsafe_allow_html=True,
 )
 
@@ -145,6 +153,11 @@ def use_example(text):
     st.session_state.topic = text
 
 
+def surprise_me():
+    others = [t for t in EXAMPLES.values() if t != st.session_state.get("topic")]
+    st.session_state.topic = random.choice(others)
+
+
 def undo():
     st.session_state.history.pop()
     st.session_state.truncated = False
@@ -168,6 +181,7 @@ with st.sidebar:
         default="Blog Post",
         format_func=lambda name: f"{FORMATS[name][0]} {name}",
     ) or "Blog Post"
+    st.image(str(ASSETS / IMAGES[content_type]), width="stretch")
     tone = st.pills("Tone of voice", TONES, default="Professional") or "Professional"
     length = st.select_slider("Length", list(LENGTHS), value="Medium")
     topic = st.text_area(
@@ -178,6 +192,7 @@ with st.sidebar:
     )
     audience = st.text_input("Target audience", value="Tech Professionals & Entrepreneurs")
     notes = st.text_input("Extra constraints (optional)", placeholder="e.g., include bullet points")
+    st.button("🎲 Surprise me with a topic", on_click=surprise_me, width="stretch")
     generate_clicked = st.button("🚀 Generate content", type="primary", width="stretch")
 
 # Main area
@@ -268,6 +283,7 @@ elif not action:
         ]
         for column, (name, (icon, _)), blurb in zip(st.columns(3), FORMATS.items(), blurbs):
             with column.container(border=True):
+                st.image(str(ASSETS / IMAGES[name]), width="stretch")
                 st.markdown(f"### {icon} {name}\n{blurb}")
         st.info("Pick your settings in the sidebar, then click **Generate content**.")
 
